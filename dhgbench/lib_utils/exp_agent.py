@@ -1,13 +1,15 @@
 import os
 import copy
 import numpy as np
+from datetime import datetime
 #from parameter_parser import parameter_parser
 import torch
 from collections import defaultdict
 from lib_utils.utils import fix_seed,result_printer,mean_std_metrics
 from lib_utils.train_agent import Trainer
 from lib_utils.eval_agent import Evaluator
-from lib_models.HNN import HCHA,HyperGCN,HNHN,SetGNN,UniGNN,UniGCNII,LEGCN,HyperND,EquivSetGNN,\
+from lib_utils.result_logger import ResultLogger
+from lib_models.HNN import HCHA,HyperGCN,HNHN,SetGNN,UniGNN,UniGCNII,LEGCN,HyperND,EquivSetGNN,OrderSplitEDHNN,\
                             PlainUnigencoder,HJRL,SheafHyperGNN,EHNN,TMPHN,PhenomNN,PhenomNNS,DPHGNN,TFHNN,PlainMLP,HyperGT,CEGCN,CEGAT
 
 from lib_dataset.data_perturbation import perturbation
@@ -30,6 +32,10 @@ class ExpAgent:
         self.trainer=Trainer(args)
         self.evaluator=Evaluator(args)
         self.train_times = []
+        run_started_at = datetime.now()
+        self.run_id = run_started_at.strftime('%Y%m%d_%H%M%S_%f')
+        self.run_timestamp = run_started_at.isoformat(timespec='microseconds')
+        self.result_logger = ResultLogger(args, self.run_id, self.run_timestamp)
 
     def edge_pred_train_eval(self,data):
         if self.args.edge_pred_protocol == 'observed' and self.args.edge_split_mode == 'ind':
@@ -130,6 +136,7 @@ class ExpAgent:
     def node_cls_train_eval(self,data):
         
         metrics_dict=defaultdict(list)
+        local_train_times = []
 
         for seed in range(self.args.num_seeds):
             
@@ -155,6 +162,7 @@ class ExpAgent:
             self.trainer.training(model,data,self.args,seed_split=masks,task_type='node_cls')
             
             self.train_times.append(self.trainer.train_time)
+            local_train_times.append(self.trainer.train_time)
 
             # Evasion Attack
             if self.args.is_perturbed and not self.args.is_poison:
@@ -171,15 +179,32 @@ class ExpAgent:
             
             for m in result:
                 metrics_dict[m].append(result[m])
+            self.result_logger.log_node_cls_seed(
+                seed,
+                result,
+                self.trainer.train_time,
+                data,
+            )
             
         print(f'---------------------------------[Final]--------------------------------------')
         self.test_dict = defaultdict(list) 
+        metric_statistics = {}
         for m in metrics_dict:
             result_printer(metrics_dict[m],m)
             metrics_mean, metrics_std = mean_std_metrics(metrics_dict[m])
+            metric_statistics[m] = (metrics_mean, metrics_std)
             self.test_dict[m].extend([metrics_mean[-1],metrics_std[-1]])
         print(f'Avg Training Time: {np.mean(self.train_times):2f}')
         print(f'------------------------------------------------------------------------------')
+        self.result_logger.log_node_cls_summary(
+            metric_statistics,
+            np.mean(local_train_times),
+            np.std(local_train_times),
+        )
+        if self.result_logger.enabled:
+            print(f'[Results] Seed-level results saved to: {self.result_logger.runs_path}')
+            print(f'[Results] Summary saved to: {self.result_logger.summary_path}')
+            print(f'[Results] run_id: {self.run_id}')
 
     def hg_cls_train_eval(self,data):
         
@@ -268,6 +293,8 @@ def parse_model(args, data):
         model = HyperND(data.num_features, num_targets, args)
     elif args.method == 'EDHNN':
         model = EquivSetGNN(data.num_features, num_targets, args)
+    elif args.method == 'OrderSplitEDHNN':
+        model = OrderSplitEDHNN(data.num_features, num_targets, args)
     elif args.method == 'SheafHyperGNN':
         model = SheafHyperGNN(data.num_features,num_targets,args)
     elif args.method == 'EHNN':

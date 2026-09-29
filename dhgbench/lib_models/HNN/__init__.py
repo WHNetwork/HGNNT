@@ -7,6 +7,7 @@ from .unigcn2 import UniGCNII
 from .legcn import LEGCN
 from .hypernd import HyperND
 from .edgnn import EquivSetGNN
+from .ordersplit_edhnn import OrderSplitEDHNN
 from .unigencoder import PlainUnigencoder
 from .hjrl import HJRL
 from .sheafhypergnn import SheafHyperGNN

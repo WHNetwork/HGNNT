@@ -127,6 +127,11 @@ def parameter_parser():
     parser.add_argument('--is_default',default=False)
     parser.add_argument('--use_processed', default=True)
     parser.add_argument('--method', default='HGNN') 
+    parser.add_argument('--save_results', default=True, type=str2bool)
+    parser.add_argument('--results_dir', default='./results', type=str)
+    parser.add_argument('--order_fusion', default='mean', choices=['mean','attn','cross_attn'])
+    parser.add_argument('--max_exact_order', default=8, type=int)
+    parser.add_argument('--order_heads', default=4, type=int)
     
     parser.add_argument('--device', default='cuda:0')
     parser.add_argument('--num_seeds', type=int, default=2)
