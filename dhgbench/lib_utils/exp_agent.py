@@ -9,7 +9,7 @@ from lib_utils.utils import fix_seed,result_printer,mean_std_metrics
 from lib_utils.train_agent import Trainer
 from lib_utils.eval_agent import Evaluator
 from lib_utils.result_logger import ResultLogger
-from lib_models.HNN import HCHA,HyperGCN,HNHN,SetGNN,UniGNN,UniGCNII,LEGCN,HyperND,EquivSetGNN,OrderSplitEDHNN,\
+from lib_models.HNN import CENE,HCHA,HyperGCN,HNHN,SetGNN,UniGNN,UniGCNII,LEGCN,HyperND,EquivSetGNN,OrderSplitEDHNN,\
                             PlainUnigencoder,HJRL,SheafHyperGNN,EHNN,TMPHN,PhenomNN,PhenomNNS,DPHGNN,TFHNN,PlainMLP,HyperGT,CEGCN,CEGAT
 
 from lib_dataset.data_perturbation import perturbation
@@ -138,7 +138,7 @@ class ExpAgent:
         metrics_dict=defaultdict(list)
         local_train_times = []
 
-        for seed in range(self.args.num_seeds):
+        for seed in range(getattr(self.args, 'seed_offset', 0), getattr(self.args, 'seed_offset', 0) + self.args.num_seeds):
             
             fix_seed(seed) 
             
@@ -184,6 +184,7 @@ class ExpAgent:
                 result,
                 self.trainer.train_time,
                 data,
+                model=model,
             )
             
         print(f'---------------------------------[Final]--------------------------------------')
@@ -263,7 +264,11 @@ def parse_model(args, data):
     
     # --------- Hypergraph Semi-supervised Models --------------------
     
-    if args.method == 'AllSetformer':
+    if args.method == 'CENE':
+        if args.task_type != 'node_cls':
+            raise ValueError('CENE supports node_cls only')
+        model = CENE(data.num_features, num_targets, args)
+    elif args.method == 'AllSetformer':
         if args.LearnMask:
             model = SetGNN(data.num_features, num_targets, args, data.norm)
         else:

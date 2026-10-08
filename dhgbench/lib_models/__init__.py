@@ -1,2 +1,2 @@
-_semi_methods_=['HGNN','HyperGCN','HCHA','HNHN','AllSetformer','AllDeepSets','UniGIN',
+_semi_methods_=['CENE','HGNN','HyperGCN','HCHA','HNHN','AllSetformer','AllDeepSets','UniGIN',
           'LEGCN','HyperND','UniGCNII','EDHNN','OrderSplitEDHNN','PlainUnigencoder','HJRL','SheafHyperGNN','EHNN','TMPHN','PhenomNNS','PhenomNN','HyperGT','DPHGNN','TFHNN','CEGCN','CEGAT','MLP']

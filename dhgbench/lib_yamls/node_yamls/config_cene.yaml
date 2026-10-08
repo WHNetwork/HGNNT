@@ -1,0 +1,42 @@
+default:
+  epochs: 200
+  dropout: 0.2
+  lr: 1.0e-3
+  wd: 0
+  MLP_hidden: 128
+  decoder_hidden: 128
+cora:
+  epochs: 200
+  dropout: 0.5
+  lr: 1.0e-3
+  wd: 0
+  MLP_hidden: 512
+  decoder_hidden: 256
+coauthor_cora:
+  epochs: 500
+  dropout: 0.5
+  lr: 1.0e-3
+  wd: 0
+  MLP_hidden: 512
+  decoder_hidden: 256
+coauthor_dblp:
+  epochs: 40
+  dropout: 0.5
+  lr: 1.0e-3
+  wd: 0
+  MLP_hidden: 512
+  decoder_hidden: 256
+NTU2012:
+  epochs: 100
+  dropout: 0.5
+  lr: 1.0e-3
+  wd: 0
+  MLP_hidden: 512
+  decoder_hidden: 256
+house-committees-100:
+  epochs: 200
+  dropout: 0.5
+  lr: 1.0e-3
+  wd: 0
+  MLP_hidden: 512
+  decoder_hidden: 256

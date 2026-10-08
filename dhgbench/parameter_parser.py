@@ -20,11 +20,17 @@ def method_config(args):
     try:
         # conf_dt = json.load(open(f"{os.path.join('./', 'lib_configs', args.method.lower(), config_name)}.json")) 
         task_prefix=args.task_type.split('_')[0]+'_yamls'
-        conf_dt = yaml.safe_load(open(f"{os.path.join('./', 'lib_yamls', task_prefix,'config_'+args.method.lower())}.yaml"))[config_name] 
+        configs = yaml.safe_load(open(f"{os.path.join('./', 'lib_yamls', task_prefix,'config_'+args.method.lower())}.yaml"))
+        if args.method == 'CENE':
+            conf_dt = configs.get(config_name, configs['default'])
+        else:
+            conf_dt = configs[config_name]
         update_from_dict(args, conf_dt)
     except:
         print('No config file found or error in json format, please use method_config(args)')
 
+    if getattr(args, 'edhnn_depth_match', False) and args.method == 'EDHNN':
+        args.All_num_layers = 2
     return args
 
 def str2bool(v):
@@ -56,6 +62,8 @@ def validate_observed_edge_prediction_args(args):
 
 def set_task_args(args):
     validate_observed_edge_prediction_args(args)
+    if args.method == 'CENE' and args.task_type != 'node_cls':
+        raise ValueError('CENE supports node_cls only')
     
     if args.task_type == 'node_cls':
         if args.dname not in _single_datasets_:
@@ -132,6 +140,11 @@ def parameter_parser():
     parser.add_argument('--order_fusion', default='mean', choices=['mean','attn','cross_attn'])
     parser.add_argument('--max_exact_order', default=8, type=int)
     parser.add_argument('--order_heads', default=4, type=int)
+    parser.add_argument('--cene_mode', default='CENE', choices=['ENE', 'ENE-Excl', 'CENE', 'CENE-Shuffle'])
+    parser.add_argument('--cene_shuffle_seed', default=0, type=int)
+    parser.add_argument('--cene_benchmark', action='store_true')
+    parser.add_argument('--seed_offset', default=0, type=int)
+    parser.add_argument('--edhnn_depth_match', action='store_true')
     
     parser.add_argument('--device', default='cuda:0')
     parser.add_argument('--num_seeds', type=int, default=2)

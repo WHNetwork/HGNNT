@@ -24,6 +24,8 @@ MODEL_CONFIG_FIELDS = [
     'order_heads',
 ]
 
+BENCHMARK_FIELDS = ['cene_mode', 'cene_shuffle_seed', 'parameter_count', 'lambda_value']
+
 RUN_FIELDS = [
     'run_id',
     'timestamp',
@@ -71,6 +73,9 @@ class ResultLogger:
         self.results_dir = getattr(args, 'results_dir', './results')
         self.runs_path = os.path.join(self.results_dir, 'node_cls_runs.csv')
         self.summary_path = os.path.join(self.results_dir, 'node_cls_summary.csv')
+        if getattr(args, 'method', '') == 'CENE' and not getattr(args, 'cene_benchmark', False):
+            self.runs_path = os.path.join(self.results_dir, 'cene_node_cls_runs.csv')
+            self.summary_path = os.path.join(self.results_dir, 'cene_node_cls_summary.csv')
 
         if self.enabled:
             os.makedirs(self.results_dir, exist_ok=True)
@@ -115,7 +120,7 @@ class ResultLogger:
                 writer.writeheader()
             writer.writerow({field: row.get(field, '') for field in fieldnames})
 
-    def log_node_cls_seed(self, seed, metrics, train_time, data):
+    def log_node_cls_seed(self, seed, metrics, train_time, data, model=None):
         if not self.enabled:
             return
 
@@ -132,7 +137,14 @@ class ResultLogger:
             'num_classes': getattr(data, 'num_classes', ''),
         })
         row.update(self._config_row())
-        self._append_row(self.runs_path, RUN_FIELDS, row)
+        fields = RUN_FIELDS
+        if getattr(self.args, 'cene_benchmark', False) or getattr(self.args, 'method', '') == 'CENE':
+            row['cene_mode'] = getattr(self.args, 'cene_mode', '') if self.args.method == 'CENE' else ''
+            row['cene_shuffle_seed'] = getattr(self.args, 'cene_shuffle_seed', '') if self.args.method == 'CENE' else ''
+            row['parameter_count'] = sum(p.numel() for p in model.parameters()) if model is not None else ''
+            row['lambda_value'] = model.lambda_param.item() if self.args.method == 'CENE' and model is not None else ''
+            fields = RUN_FIELDS + BENCHMARK_FIELDS
+        self._append_row(self.runs_path, fields, row)
 
     def log_node_cls_summary(
         self,
@@ -158,4 +170,9 @@ class ResultLogger:
         row['avg_train_time'] = avg_train_time
         row['std_train_time'] = std_train_time
         row.update(self._config_row())
-        self._append_row(self.summary_path, SUMMARY_FIELDS, row)
+        fields = SUMMARY_FIELDS
+        if getattr(self.args, 'cene_benchmark', False) or getattr(self.args, 'method', '') == 'CENE':
+            row['cene_mode'] = getattr(self.args, 'cene_mode', '') if self.args.method == 'CENE' else ''
+            row['cene_shuffle_seed'] = getattr(self.args, 'cene_shuffle_seed', '') if self.args.method == 'CENE' else ''
+            fields = SUMMARY_FIELDS + BENCHMARK_FIELDS
+        self._append_row(self.summary_path, fields, row)
