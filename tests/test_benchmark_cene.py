@@ -96,15 +96,90 @@ class BenchmarkCENEResumeTest(unittest.TestCase):
                 mock.patch.object(bench, 'config_status', return_value=None), \
                 mock.patch.object(bench, 'uses_default', return_value=False), \
                 mock.patch.object(bench.subprocess, 'Popen', side_effect=launch) as popen, \
+                mock.patch.object(bench, 'tqdm') as tqdm, \
                 contextlib.redirect_stdout(io.StringIO()):
+            progress = tqdm.return_value.__enter__.return_value
             bench.main(argv)
             self.assertEqual(popen.call_count, 2)
+            self.assertEqual(tqdm.call_args.kwargs['total'], 2)
+            self.assertEqual(tqdm.call_args.kwargs['initial'], 0)
+            self.assertEqual(progress.update.call_args_list, [mock.call(1), mock.call(1)])
+            self.assertEqual(progress.set_postfix.call_args.kwargs['Completed'], 1)
+            self.assertEqual(progress.set_postfix.call_args.kwargs['Failed'], 1)
+            self.assertEqual(progress.set_postfix.call_args.kwargs['Remaining'], 0)
             self.assertEqual(len(bench.read_rows(self.run_dir / 'node_cls_runs.csv')), 1)
             self.assertEqual(len(bench.read_rows(self.output / 'cene_failures.csv')), 1)
+            progress.reset_mock()
             bench.main(argv)
             self.assertEqual(popen.call_count, 3)  # Retry failure, skip matching EDHNN.
+            self.assertEqual(tqdm.call_args.kwargs['initial'], 1)
+            progress.update.assert_called_once_with(1)
             bench.main([item.replace('cpu', 'cuda:1') for item in argv])
             self.assertEqual(popen.call_count, 5)  # Different command requires rerun.
+
+    def test_progress_total_excludes_skips_and_updates_on_success(self):
+        def launch(command, **kwargs):
+            options = dict(item[2:].split('=', 1) for item in command if item.startswith('--') and '=' in item)
+            directory = Path(options['results_dir'])
+            row = dict(self.row, dataset=options['dname'], method=options['method'], seed=options['seed_offset'])
+            bench.write_rows(directory / 'node_cls_runs.csv', [row], list(row))
+            process = mock.MagicMock()
+            process.__enter__.return_value = process
+            process.wait.return_value = 0
+            return process
+
+        def config_status(method, dataset):
+            return 'no pubmed configuration' if (method, dataset) == ('HGNN', 'pubmed') else None
+
+        with mock.patch.object(bench, 'METHODS', ['EDHNN', 'HGNN']), \
+                mock.patch.object(bench, 'config_status', side_effect=config_status), \
+                mock.patch.object(bench, 'uses_default', return_value=False), \
+                mock.patch.object(bench.subprocess, 'Popen', side_effect=launch) as popen, \
+                mock.patch.object(bench, 'tqdm') as tqdm:
+            bench.main(['--execute', '--datasets', 'cora', 'pubmed', '--num-seeds', '2',
+                        '--device', 'cpu', '--output', str(self.output)])
+            progress = tqdm.return_value.__enter__.return_value
+            self.assertEqual(tqdm.call_args.kwargs['total'], 6)  # 3 supported pairs × 2 seeds.
+            self.assertEqual(popen.call_count, 6)
+            self.assertEqual(progress.update.call_args_list, [mock.call(1)] * 6)
+            self.assertEqual(progress.set_postfix.call_args.kwargs['Completed'], 6)
+            self.assertEqual(progress.set_postfix.call_args.kwargs['Remaining'], 0)
+            tqdm.write.assert_any_call('SKIP pubmed HGNN: no pubmed configuration')
+            self.assertFalse(any('--method=' in call.args[0] for call in tqdm.write.call_args_list))
+            tqdm.return_value.__exit__.assert_called_once()
+
+    def test_dry_run_prints_commands_without_training_or_progress(self):
+        with mock.patch.object(bench, 'METHODS', ['EDHNN']), \
+                mock.patch.object(bench, 'config_status', return_value=None), \
+                mock.patch.object(bench, 'uses_default', return_value=False), \
+                mock.patch.object(bench.subprocess, 'Popen') as popen, \
+                mock.patch.object(bench, 'tqdm') as tqdm:
+            bench.main(['--execute', '--dry-run', '--datasets', 'cora', '--num-seeds', '2',
+                        '--output', str(self.output)])
+            popen.assert_not_called()
+            tqdm.assert_not_called()
+            self.assertEqual(tqdm.write.call_count, 2)
+            self.assertIn('--seed_offset=1', tqdm.write.call_args.args[0])
+            self.assertFalse((self.output / 'cene_summary.csv').exists())
+
+    def test_interrupt_closes_progress_and_preserves_completed_result(self):
+        with mock.patch.object(bench, 'uses_default', return_value=False):
+            command = bench.build_command('cora', 'EDHNN', 0, 'cpu', self.run_dir)
+        self.save(command=command)
+        process = mock.MagicMock()
+        process.__enter__.return_value = process
+        process.wait.side_effect = [KeyboardInterrupt, 0]
+        with mock.patch.object(bench, 'METHODS', ['EDHNN']), \
+                mock.patch.object(bench, 'config_status', return_value=None), \
+                mock.patch.object(bench, 'uses_default', return_value=False), \
+                mock.patch.object(bench.subprocess, 'Popen', return_value=process), \
+                mock.patch.object(bench, 'tqdm') as tqdm:
+            bench.main(['--execute', '--datasets', 'cora', '--num-seeds', '2',
+                        '--device', 'cpu', '--output', str(self.output)])
+            process.terminate.assert_called_once()
+            tqdm.return_value.__exit__.assert_called_once()
+            self.assertIsNotNone(bench.valid_result(self.run_dir, 'cora', 'EDHNN', 0, command))
+            self.assertEqual(len(bench.read_rows(self.output / 'cene_runs.csv')), 1)
 
 
 if __name__ == '__main__':

@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from tqdm import tqdm
 
 from lib_dataset import _single_datasets_
 from lib_models import _semi_methods_
@@ -196,32 +197,50 @@ def main(argv=None):
     commands = {}
     for dataset in datasets:
         for method in METHODS:
-            if dataset in CLI_UNAVAILABLE or config_status(method, dataset):
+            reason = (f'dataset {dataset} is absent from parameter_parser --dname choices'
+                      if dataset in CLI_UNAVAILABLE else config_status(method, dataset))
+            if reason:
+                failures.append(dict(dataset=dataset, method=method, seed='', reason=reason))
+                tqdm.write(f'SKIP {dataset} {method}: {reason}')
                 continue
             for seed in range(args.num_seeds):
                 run_dir = args.output / 'seeds' / dataset / method.replace(':', '_') / str(seed)
                 commands[dataset, method, seed] = build_command(dataset, method, seed, args.device, run_dir)
-    for dataset in datasets:
-        for method in METHODS:
-            if dataset in CLI_UNAVAILABLE:
-                reason = f'dataset {dataset} is absent from parameter_parser --dname choices'
-                failures.append(dict(dataset=dataset, method=method, seed='', reason=reason))
-                print(f'SKIP {dataset} {method}: {reason}')
-                continue
-            reason = config_status(method, dataset)
-            if reason:
-                failures.append(dict(dataset=dataset, method=method, seed='', reason=reason))
-                print(f'SKIP {dataset} {method}: {reason}')
-                continue
-            for seed in range(args.num_seeds):
+    completed_tasks = set()
+    for (dataset, method, seed), command in commands.items():
+        run_dir = args.output / 'seeds' / dataset / method.replace(':', '_') / str(seed)
+        if valid_result(run_dir, dataset, method, seed, command):
+            completed_tasks.add((dataset, method, seed))
+
+    if args.dry_run:
+        for task, command in commands.items():
+            dataset, method, seed = task
+            if task in completed_tasks:
+                tqdm.write(f'DONE {dataset} {method} seed={seed} (resumed)')
+            else:
+                tqdm.write(subprocess.list2cmdline(command))
+        return
+
+    completed = len(completed_tasks)
+    failed = 0
+    current = 'Preparing'
+    active_run_dir = None
+    with tqdm(total=len(commands), initial=completed, desc='CENE Benchmark',
+              unit='experiment', dynamic_ncols=True) as progress:
+        def show_status():
+            progress.set_postfix(Current=current, Completed=completed, Failed=failed,
+                                 Remaining=len(commands) - completed - failed)
+
+        show_status()
+        try:
+            for (dataset, method, seed), command in commands.items():
+                if (dataset, method, seed) in completed_tasks:
+                    tqdm.write(f'DONE {dataset} {method} seed={seed} (resumed)')
+                    continue
+                current = f'{dataset} | {method} | seed={seed}'
+                show_status()
                 run_dir = args.output / 'seeds' / dataset / method.replace(':', '_') / str(seed)
-                command = commands[dataset, method, seed]
-                if valid_result(run_dir, dataset, method, seed, command):
-                    print(f'DONE {dataset} {method} seed={seed}')
-                    continue
-                print(subprocess.list2cmdline(command), flush=True)
-                if args.dry_run:
-                    continue
+                active_run_dir = run_dir
                 try:
                     run_dir.mkdir(parents=True, exist_ok=True)
                     # ResultLogger appends: remove only this seed's old CSV files.
@@ -243,18 +262,24 @@ def main(argv=None):
                         lines = (run_dir / 'stdout.log').read_text(encoding='utf-8', errors='replace').splitlines()
                         detail = next((line.strip() for line in reversed(lines) if line.strip()), 'no output')
                         raise RuntimeError(f'exit code {returncode}; invalid or missing result: {detail}; see {run_dir / "stdout.log"}')
-                except KeyboardInterrupt:
-                    (run_dir / 'node_cls_runs.csv').unlink(missing_ok=True)
-                    failures.append(dict(dataset=dataset, method=method, seed=seed, reason='interrupted by user'))
-                    report(args.output, datasets, METHODS, args.num_seeds, failures, commands)
-                    print('Stopped. Re-run the same command to resume.', flush=True)
-                    return
                 except (OSError, RuntimeError) as exc:
                     reason = str(exc)
                     failures.append(dict(dataset=dataset, method=method, seed=seed, reason=reason))
-                    print(f'FAIL {dataset} {method} seed={seed}: {reason}', flush=True)
-    if args.execute and not args.dry_run:
-        report(args.output, datasets, METHODS, args.num_seeds, failures, commands)
+                    failed += 1
+                    tqdm.write(f'FAIL {dataset} {method} seed={seed}: {reason}')
+                else:
+                    completed += 1
+                    tqdm.write(f'DONE {dataset} {method} seed={seed}')
+                active_run_dir = None
+                progress.update(1)
+                show_status()
+        except KeyboardInterrupt:
+            if active_run_dir is not None:
+                (active_run_dir / 'node_cls_runs.csv').unlink(missing_ok=True)
+                failures.append(dict(dataset=dataset, method=method, seed=seed,
+                                     reason='interrupted by user'))
+            tqdm.write('Stopped. Re-run the same command to resume.')
+    report(args.output, datasets, METHODS, args.num_seeds, failures, commands)
 
 
 if __name__ == '__main__':
