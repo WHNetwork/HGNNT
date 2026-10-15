@@ -1,5 +1,6 @@
 import argparse
 import os
+import sys
 import yaml
 from lib_dataset import _single_datasets_,_multi_datasets_
 
@@ -12,6 +13,19 @@ def update_from_dict(obj, updates):
 
 # recommend hyperparameters here
 def method_config(args):
+
+    if args.method == 'HIRBERT':
+        # Keep HIRBERT CLI overrides without changing baseline config semantics.
+        config_path = os.path.join(os.path.dirname(__file__), 'lib_yamls',
+                                   'node_yamls', 'config_hirbert.yaml')
+        with open(config_path, encoding='utf-8') as file:
+            configs = yaml.safe_load(file)
+        name = 'default' if str2bool(args.is_default) else args.dname
+        conf_dt = dict(configs['default'])
+        conf_dt.update(configs.get(name, {}))
+        conf_dt.update(getattr(args, '_hirbert_cli_overrides', {}))
+        update_from_dict(args, conf_dt)
+        return args
 
     if args.is_default:
         config_name = 'default'
@@ -64,11 +78,13 @@ def set_task_args(args):
     validate_observed_edge_prediction_args(args)
     if args.method == 'CENE' and args.task_type != 'node_cls':
         raise ValueError('CENE supports node_cls only')
+    if args.method == 'HIRBERT' and args.task_type != 'node_cls':
+        raise ValueError('HIRBERT V0.1 supports node_cls only')
     
     if args.task_type == 'node_cls':
         if args.dname not in _single_datasets_:
             raise ValueError('The dataset is not suitable for node classification')
-        args.add_self_loop=True 
+        args.add_self_loop = args.method != 'HIRBERT'
         if args.use_bench_prop:
             args.train_prop,args.valid_prop = 0.5,0.25
         args.early_stop = False
@@ -145,6 +161,15 @@ def parameter_parser():
     parser.add_argument('--cene_benchmark', action='store_true')
     parser.add_argument('--seed_offset', default=0, type=int)
     parser.add_argument('--edhnn_depth_match', action='store_true')
+
+    parser.add_argument('--hir_hidden_size', type=int, default=None)
+    parser.add_argument('--hir_num_hidden_layers', type=int, default=None)
+    parser.add_argument('--hir_num_attention_heads', type=int, default=None)
+    parser.add_argument('--hir_intermediate_size', type=int, default=None)
+    parser.add_argument('--hir_dropout', type=float, default=None)
+    parser.add_argument('--hir_max_seq_length', type=int, default=None)
+    parser.add_argument('--hir_chunk_batch_size', type=int, default=None)
+    parser.add_argument('--hir_gradient_checkpointing', type=str2bool, default=None)
     
     parser.add_argument('--device', default='cuda:0')
     parser.add_argument('--num_seeds', type=int, default=2)
@@ -202,5 +227,9 @@ def parameter_parser():
     parser.set_defaults(exclude_self=False)
 
     args = parser.parse_args()
+
+    if args.method == 'HIRBERT':
+        explicit = {arg[2:].split('=', 1)[0] for arg in sys.argv[1:] if arg.startswith('--')}
+        args._hirbert_cli_overrides = {key: getattr(args, key) for key in explicit if hasattr(args, key)}
 
     return args

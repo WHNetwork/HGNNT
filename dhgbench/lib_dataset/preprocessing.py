@@ -28,6 +28,10 @@ def data_processing(args,db):
             data = expand_edge_index(data)
         data = norm_contruction(data, option=args.normtype)
         db.norm=data.norm.to(args.device)
+    elif args.method == 'HIRBERT':
+        # Compile only the dataset hyperedges. Keep genuine singleton edges.
+        if data.edge_index.numel():
+            data.edge_index[1] -= data.edge_index[1].min()
     else:
         if args.add_self_loop:
             data = Add_Self_Loops(data)

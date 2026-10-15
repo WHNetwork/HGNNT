@@ -9,7 +9,8 @@ from lib_utils.utils import fix_seed,result_printer,mean_std_metrics
 from lib_utils.train_agent import Trainer
 from lib_utils.eval_agent import Evaluator
 from lib_utils.result_logger import ResultLogger
-from lib_models.HNN import CENE,HCHA,HyperGCN,HNHN,SetGNN,UniGNN,UniGCNII,LEGCN,HyperND,EquivSetGNN,OrderSplitEDHNN,\
+from lib_utils.hirbert_results import save_hirbert_run
+from lib_models.HNN import HIRBERT,CENE,HCHA,HyperGCN,HNHN,SetGNN,UniGNN,UniGCNII,LEGCN,HyperND,EquivSetGNN,OrderSplitEDHNN,\
                             PlainUnigencoder,HJRL,SheafHyperGNN,EHNN,TMPHN,PhenomNN,PhenomNNS,DPHGNN,TFHNN,PlainMLP,HyperGT,CEGCN,CEGAT
 
 from lib_dataset.data_perturbation import perturbation
@@ -186,6 +187,12 @@ class ExpAgent:
                 data,
                 model=model,
             )
+            if self.args.method == 'HIRBERT' and self.result_logger.enabled:
+                path = save_hirbert_run(
+                    model, data, masks, self.trainer.hirbert_history, result,
+                    self.trainer.train_time, self.args, self.run_id, seed,
+                )
+                print(f'[HIRBERT artifacts] {path}')
             
         print(f'---------------------------------[Final]--------------------------------------')
         self.test_dict = defaultdict(list) 
@@ -264,7 +271,11 @@ def parse_model(args, data):
     
     # --------- Hypergraph Semi-supervised Models --------------------
     
-    if args.method == 'CENE':
+    if args.method == 'HIRBERT':
+        if args.task_type != 'node_cls':
+            raise ValueError('HIRBERT V0.1 supports node_cls only')
+        model = HIRBERT(data.num_features, num_targets, args)
+    elif args.method == 'CENE':
         if args.task_type != 'node_cls':
             raise ValueError('CENE supports node_cls only')
         model = CENE(data.num_features, num_targets, args)

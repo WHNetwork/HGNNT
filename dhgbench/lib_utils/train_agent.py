@@ -192,6 +192,9 @@ class Trainer:
             train_idx = mask_to_index(masks['train'].to('cpu'),data.x.shape[0])
             data.target_idx = train_idx
 
+        if args.method == 'HIRBERT':
+            self.hirbert_history = []
+
         #for epoch in tqdm(range(args.epochs)):
         for epoch in trange(args.epochs):
         # for epoch in range(args.epochs):
@@ -229,12 +232,25 @@ class Trainer:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_thresh)
                 optimizer.step()
 
+            if args.method == 'HIRBERT':
+                model.eval()
+                with torch.no_grad():
+                    prediction, _ = model(data)
+                    val_loss = criterion(F.log_softmax(prediction[masks['valid']], dim=1),
+                                         data.y[masks['valid']])
+                    accuracies = [float((prediction[masks[key]].argmax(-1) == data.y[masks[key]]).float().mean())
+                                  for key in ('train', 'valid', 'test')]
+                self.hirbert_history.append({
+                    'epoch': epoch + 1, 'train_loss': loss.item(), 'val_loss': val_loss.item(),
+                    **dict(zip(('train_acc', 'val_acc', 'test_acc'), (100 * acc for acc in accuracies))),
+                })
+
             if (epoch+1) % args.display_step == 0:
                 
                 if args.method == 'TMPHN':
                     data.target_idx=data.all_idx
                     
-                result = evaluate(model, data, masks) 
+                result = accuracies if args.method == 'HIRBERT' else evaluate(model, data, masks)
                 
                 print(f'Epoch: {epoch+1:02d}, '
                     f'Train Acc: {100 * result[0]:.2f}%, '

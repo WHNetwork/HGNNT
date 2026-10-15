@@ -21,3 +21,4 @@ from .mlp import MLP,PlainMLP
 from .hypergt import HyperGT
 from .cegnn import CEGCN,CEGAT
 from .cene import CENE
+from .hirbert import HIRBERT
