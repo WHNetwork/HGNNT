@@ -65,6 +65,30 @@ class HIREncoder(nn.Module):
                            return_dict=True).last_hidden_state
         return hidden[rows, positions]
 
+    def encode_node_queries(self, projected_features, node_ids, batch_size=256):
+        """Encode candidate NODE queries without supplying any membership.
+
+        Pretraining uses these for candidates with no remaining visible context.
+        The BERT, NODE embedding, sinusoidal IDs and feature projection are the
+        same ones used by forward(). No new encoder parameters are introduced.
+        """
+        states = []
+        hidden = projected_features.shape[-1]
+        for ids in node_ids.split(batch_size):
+            phase = ids.to(projected_features.dtype).unsqueeze(-1) * self.frequencies
+            identity = torch.stack((phase.sin(), phase.cos()), dim=-1).flatten(-2)[..., :hidden]
+            types = torch.full_like(ids, NODE)
+            inputs = (self.bert.embeddings.word_embeddings(types) + identity
+                      + projected_features[ids]).unsqueeze(1)
+            mask = torch.ones((len(ids), 1), dtype=torch.long, device=ids.device)
+            args = (inputs, mask, torch.arange(len(ids), device=ids.device), torch.zeros_like(ids))
+            if self.use_checkpointing and self.training and torch.is_grad_enabled():
+                encoded = checkpoint(self._encode_readouts, *args, use_reentrant=False)
+            else:
+                encoded = self._encode_readouts(*args)
+            states.append(encoded)
+        return torch.cat(states) if states else projected_features.new_empty((0, hidden))
+
     def forward(self, projected_features, program, chunks):
         hidden = projected_features.shape[1]
         num_edges = len(program.hyperedges)
@@ -115,8 +139,9 @@ class HIREncoder(nn.Module):
             states.append(encoded)
             edge_ids.append(torch.tensor(targets, dtype=torch.long, device=device))
             weights.append(torch.tensor(contributions, dtype=encoded.dtype, device=device))
-        return projected_features.new_zeros((num_edges, hidden)).index_add(
-            0, torch.cat(edge_ids), torch.cat(states) * torch.cat(weights).unsqueeze(-1))
+        encoded_states = torch.cat(states)
+        return encoded_states.new_zeros((num_edges, hidden)).index_add(
+            0, torch.cat(edge_ids), encoded_states * torch.cat(weights).unsqueeze(-1))
 
 
 class HIRBERT(nn.Module):
