@@ -175,6 +175,10 @@ class Trainer:
         ### Training loop ###
         start_time = time.time()
         model.reset_parameters()
+        if args.method == 'HIRGraphBERT' and getattr(args, 'hir_pretrained_checkpoint', None):
+            from lib_models.hirgraphbert import load_encoder
+            report = load_encoder(model, args.hir_pretrained_checkpoint)
+            print(f'[HIRGraphBERT encoder transfer] {len(report["loaded_keys"])} tensors strictly loaded')
         
         if args.method == 'UniGCNII':
             optimizer = torch.optim.Adam([

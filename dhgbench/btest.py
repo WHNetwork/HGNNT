@@ -119,4 +119,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if '--hirgraphbert' in sys.argv:
+        from benchmark_hirgraphbert import main as graphbert_main
+        graphbert_main([argument for argument in sys.argv[1:] if argument != '--hirgraphbert'])
+    else:
+        main()

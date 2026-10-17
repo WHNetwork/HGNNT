@@ -14,10 +14,10 @@ def update_from_dict(obj, updates):
 # recommend hyperparameters here
 def method_config(args):
 
-    if args.method == 'HIRBERT':
+    if args.method in ('HIRBERT', 'HIRGraphBERT'):
         # Keep HIRBERT CLI overrides without changing baseline config semantics.
         config_path = os.path.join(os.path.dirname(__file__), 'lib_yamls',
-                                   'node_yamls', 'config_hirbert.yaml')
+                                   'node_yamls', 'config_' + args.method.lower() + '.yaml')
         with open(config_path, encoding='utf-8') as file:
             configs = yaml.safe_load(file)
         name = 'default' if str2bool(args.is_default) else args.dname
@@ -80,11 +80,13 @@ def set_task_args(args):
         raise ValueError('CENE supports node_cls only')
     if args.method == 'HIRBERT' and args.task_type != 'node_cls':
         raise ValueError('HIRBERT V0.1 supports node_cls only')
+    if args.method == 'HIRGraphBERT' and args.task_type != 'node_cls':
+        raise ValueError('HIRGraphBERT supports node_cls only')
     
     if args.task_type == 'node_cls':
         if args.dname not in _single_datasets_:
             raise ValueError('The dataset is not suitable for node classification')
-        args.add_self_loop = args.method != 'HIRBERT'
+        args.add_self_loop = args.method not in ('HIRBERT', 'HIRGraphBERT')
         if args.use_bench_prop:
             args.train_prop,args.valid_prop = 0.5,0.25
         args.early_stop = False
@@ -170,6 +172,7 @@ def parameter_parser():
     parser.add_argument('--hir_max_seq_length', type=int, default=None)
     parser.add_argument('--hir_chunk_batch_size', type=int, default=None)
     parser.add_argument('--hir_gradient_checkpointing', type=str2bool, default=None)
+    parser.add_argument('--hir_pretrained_checkpoint', default=None)
     
     parser.add_argument('--device', default='cuda:0')
     parser.add_argument('--num_seeds', type=int, default=2)
@@ -228,7 +231,7 @@ def parameter_parser():
 
     args = parser.parse_args()
 
-    if args.method == 'HIRBERT':
+    if args.method in ('HIRBERT', 'HIRGraphBERT'):
         explicit = {arg[2:].split('=', 1)[0] for arg in sys.argv[1:] if arg.startswith('--')}
         args._hirbert_cli_overrides = {key: getattr(args, key) for key in explicit if hasattr(args, key)}
 

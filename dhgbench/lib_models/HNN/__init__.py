@@ -22,3 +22,4 @@ from .hypergt import HyperGT
 from .cegnn import CEGCN,CEGAT
 from .cene import CENE
 from .hirbert import HIRBERT
+from lib_models.hirgraphbert import HIRGraphBERT
