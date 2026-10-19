@@ -1,0 +1,17 @@
+default:
+  epochs: 500
+  lr: 0.0005
+  wd: 0.01
+  dropout: 0.2
+  hir_hidden_size: 256
+  hir_num_hidden_layers: 4
+  hir_local_num_hidden_layers: 2
+  hir_semantic_num_hidden_layers: 2
+  hir_num_attention_heads: 4
+  hir_intermediate_size: 1024
+  hir_dropout: 0.2
+  hir_max_seq_length: 512
+  hir_chunk_batch_size: 16
+  hir_gradient_checkpointing: true
+cora: {}
+citeseer: {}

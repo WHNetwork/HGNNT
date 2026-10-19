@@ -5,6 +5,7 @@ from pathlib import Path
 
 from lib_dataset import _single_datasets_
 from lib_models.hirgraphbert import HIRGRAPHBERT_DEFAULTS
+from lib_models.hircodebert import HIRCODEBERT_DEFAULTS
 from parameter_parser import str2bool
 
 
@@ -12,13 +13,17 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_DATASETS = ['cora', 'citeseer', 'coauthor_cora', 'NTU2012', 'house-committees-100']
 
 
-def build_parser():
-    parser = argparse.ArgumentParser(description='HIR-GraphBERT: Structure-only joint SSL and node classification')
+def build_parser(architecture='hirgraphbert'):
+    codebert = architecture == 'hircodebert'
+    label = 'HIR-CodeBERT' if codebert else 'HIR-GraphBERT'
+    defaults = HIRCODEBERT_DEFAULTS if codebert else HIRGRAPHBERT_DEFAULTS
+    parser = argparse.ArgumentParser(description=f'{label}: Structure-only joint SSL and node classification')
     parser.add_argument('--mode', choices=('all', 'pretrain', 'finetune'), default='all')
     parser.add_argument('--dname', choices=_single_datasets_, default='cora')
     parser.add_argument('--device', default='cuda:3')
     parser.add_argument('--data_root', type=Path, default=ROOT.parent / 'data')
-    parser.add_argument('--output', type=Path, default=ROOT / 'results' / 'hirgraphbert_structure_only')
+    parser.add_argument('--output', type=Path,
+                        default=ROOT / 'results' / ('hircodebert_v1' if codebert else 'hirgraphbert_structure_only'))
     parser.add_argument('--pretrain_datasets', nargs='+', choices=_single_datasets_, default=DEFAULT_DATASETS)
     parser.add_argument('--pretrained_checkpoint', type=Path)
     parser.add_argument('--variants', nargs='+', choices=('scratch', 'pretrained'), default=['scratch', 'pretrained'])
@@ -53,15 +58,18 @@ def build_parser():
     parser.add_argument('--amp', choices=('auto', 'bf16', 'fp16', 'off'), default='bf16')
     parser.add_argument('--scheduler', choices=('cosine', 'linear', 'none'), default='cosine')
     parser.add_argument('--feature_noise', default='0.6', help='Dataset cache selector only; no features enter this model')
-    for key, default in HIRGRAPHBERT_DEFAULTS.items():
+    for key, default in defaults.items():
         parser.add_argument('--hir_' + key, default=default,
                             type=str2bool if isinstance(default, bool) else type(default))
     return parser
 
 
-def parse_args(argv=None):
-    parser = build_parser()
+def parse_args(argv=None, architecture='hirgraphbert'):
+    parser = build_parser(architecture)
     args = parser.parse_args(argv)
+    args.model_family = architecture
+    args.model_label = 'HIR-CodeBERT' if architecture == 'hircodebert' else 'HIR-GraphBERT'
+    args.checkpoint_prefix = architecture
     args.output, args.data_root = args.output.resolve(), args.data_root.resolve()
     args.pretrain_datasets = list(dict.fromkeys(args.pretrain_datasets))
     args.variants = list(dict.fromkeys(args.variants))
@@ -74,6 +82,8 @@ def parse_args(argv=None):
                 'bert_max_batch_tokens', 'bert_max_chunk_batch_size', 'micro_batch_tune_interval', 'gradient_accumulation_steps',
                 'relation_pairs_per_class', 'relation_max_pairs', 'display_step', 'hir_hidden_size', 'hir_num_hidden_layers',
                 'hir_num_attention_heads', 'hir_intermediate_size', 'hir_chunk_batch_size')
+    if architecture == 'hircodebert':
+        positive += ('hir_local_num_hidden_layers', 'hir_semantic_num_hidden_layers')
     if any(getattr(args, key) < 1 for key in positive):
         parser.error('Epochs and sample/model/batch counts must be positive')
     if (not 7 <= args.hir_max_seq_length <= 512 or args.local_max_edges < max(2, args.local_min_edges)
@@ -81,6 +91,9 @@ def parse_args(argv=None):
         parser.error('Invalid local or chunk limits')
     if args.hir_hidden_size < 2 or args.hir_hidden_size % args.hir_num_attention_heads or not 0 <= args.hir_dropout < 1:
         parser.error('Hidden size must be divisible by heads; dropout must be in [0,1)')
+    if (architecture == 'hircodebert' and args.hir_num_hidden_layers !=
+            args.hir_local_num_hidden_layers + args.hir_semantic_num_hidden_layers):
+        parser.error('HIR-CodeBERT total layers must equal local layers plus semantic layers')
     if (min(args.pretrain_lr, args.lr, args.negative_ratio, args.lambda_m, args.lambda_r, args.lambda_h) <= 0
             or min(args.pretrain_wd, args.wd, args.grad_clip) < 0):
         parser.error('Invalid optimizer settings or structural loss weights')

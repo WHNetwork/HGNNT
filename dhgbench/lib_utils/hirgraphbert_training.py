@@ -20,12 +20,21 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 
-from lib_models.hirgraphbert import HIRGraphBERT, load_encoder, model_config
-from lib_models.hirgraphbert_pretrain import HIRGraphPretrainer
 from lib_utils.hirbert_microbatch import MicroBatchPolicy, memory_peaks, synchronize
 from lib_utils.hirbert_pretrain_utils import (atomic_save, completed_metrics, cpu_state, grad_norm, make_scheduler,
                                             restore_rng, rng_state, save_json, write_history)
 from lib_utils.hirgraphbert_data import StructureSampler, TASKS, load_graph
+
+
+def model_api(args):
+    """Select an encoder family while sharing the complete training system."""
+    if getattr(args, 'model_family', 'hirgraphbert') == 'hircodebert':
+        from lib_models.hircodebert import HIRCodeBERT, load_encoder, model_config
+        from lib_models.hircodebert_pretrain import HIRCodeBERTPretrainer
+        return HIRCodeBERT, HIRCodeBERTPretrainer, load_encoder, model_config
+    from lib_models.hirgraphbert import HIRGraphBERT, load_encoder, model_config
+    from lib_models.hirgraphbert_pretrain import HIRGraphPretrainer
+    return HIRGraphBERT, HIRGraphPretrainer, load_encoder, model_config
 
 
 def fix_seed(seed):
@@ -76,6 +85,7 @@ def write_csv(path, rows):
 
 
 def configuration(args, stage):
+    _, _, _, config_fn = model_api(args)
     keys = (('pretrain_seed', 'pretrain_epochs', 'pretrain_patience', 'pretrain_lr', 'pretrain_wd',
              'pretrain_datasets', 'local_samples_per_graph', 'validation_samples_per_graph',
              'local_max_nodes', 'local_target_count',
@@ -87,9 +97,10 @@ def configuration(args, stage):
              'bert_max_chunk_batch_size', 'auto_micro_batch', 'micro_batch_tune_interval',
              'gpu_memory_budget_gb', 'gpu_target_memory_gb', 'oom_retries') if stage == 'pretrain' else
             ('dname', 'epochs', 'patience', 'lr', 'wd', 'train_prop', 'valid_prop'))
-    result = {**{key: getattr(args, key) for key in keys}, 'model_config': model_config(args),
+    result = {**{key: getattr(args, key) for key in keys}, 'model_config': config_fn(args),
             'amp': args.amp, 'grad_clip': args.grad_clip, 'warmup_epochs': args.warmup_epochs,
-            'scheduler': args.scheduler, 'input_mode': 'Structure-only', 'model': 'HIR-GraphBERT',
+            'scheduler': args.scheduler, 'input_mode': 'Structure-only',
+            'model': getattr(args, 'model_label', 'HIR-GraphBERT'),
             'feature_noise': args.feature_noise, 'data_root': str(Path(args.data_root).resolve())}
     if stage == 'pretrain':
         # The objective changed while encoder weights stayed compatible. An
@@ -208,13 +219,14 @@ def run_pretraining(args, graphs=None, loader=load_graph):
     config = {**configuration(args, 'pretrain'), 'graphs': graph_info}
     done = completed_metrics(directory, config, ('pretrained_encoder.pt', 'pretrain_history.csv'), 'pretrain_metrics.json')
     if done:
-        print(f'[skip completed HIR-GraphBERT pretraining] {directory}')
+        print(f'[skip completed {getattr(args, "model_label", "HIR-GraphBERT")} pretraining] {directory}')
         return directory / 'pretrained_encoder.pt'
     dtype = amp_dtype(args)
     policy = MicroBatchPolicy(args)
     fix_seed(args.pretrain_seed)
-    model = HIRGraphPretrainer(model_config(args), {'membership': args.lambda_m, 'relation': args.lambda_r,
-                                                   'hir': args.lambda_h}).to(args.device)
+    _, pretrainer_cls, _, config_fn = model_api(args)
+    model = pretrainer_cls(config_fn(args), {'membership': args.lambda_m, 'relation': args.lambda_r,
+                                             'hir': args.lambda_h}).to(args.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.pretrain_lr, weight_decay=args.pretrain_wd)
     scheduler = make_scheduler(optimizer, args.scheduler, args.pretrain_epochs, min(args.warmup_epochs, args.pretrain_epochs))
     scaler = torch.cuda.amp.GradScaler(enabled=dtype == torch.float16)
@@ -240,7 +252,8 @@ def run_pretraining(args, graphs=None, loader=load_graph):
         restore_rng(saved['rng_state'])
         print(f'[resume Structure-only pretraining] after epoch {len(history)}')
     counts = model.encoder.parameter_counts() | {'total_pretraining': sum(p.numel() for p in model.parameters())}
-    print(f'[HIR-GraphBERT parameters] {counts}; AMP={dtype}; budget={args.gpu_memory_budget_gb}GiB')
+    print(f'[{getattr(args, "model_label", "HIR-GraphBERT")} parameters] {counts}; '
+          f'AMP={dtype}; budget={args.gpu_memory_budget_gb}GiB')
     for epoch in range(len(history) + 1, args.pretrain_epochs + 1):
         if bad_epochs >= args.pretrain_patience:
             break
@@ -365,8 +378,9 @@ def run_pretraining(args, graphs=None, loader=load_graph):
     if best_encoder is None:
         raise RuntimeError('No pretraining epoch completed')
     encoder_path = directory / 'pretrained_encoder.pt'
-    atomic_save({'kind': 'hirgraphbert_pretrained_encoder', 'input_mode': 'Structure-only',
-                 'shared_encoder_state_dict': best_encoder, 'model_config': model_config(args),
+    prefix = getattr(args, 'checkpoint_prefix', 'hirgraphbert')
+    atomic_save({'kind': prefix + '_pretrained_encoder', 'input_mode': 'Structure-only',
+                  'shared_encoder_state_dict': best_encoder, 'model_config': config_fn(args),
                  'seed': args.pretrain_seed, 'best_epoch': best_epoch, 'best_val_loss': best_loss,
                  'pretrain_datasets': list(samplers), 'pretrain_config': config, 'trained_samples': trained,
                  'tasks': list(TASKS), 'loss_weights': model.weights,
@@ -451,10 +465,11 @@ def finetune_run(data, args, variant, seed, checkpoint=None):
         return done
     fix_seed(seed)
     run_args = SimpleNamespace(**{**vars(args), 'seed': seed})
-    model = HIRGraphBERT(data.num_classes, run_args).to(args.device)
+    model_cls, _, load_encoder_fn, _ = model_api(args)
+    model = model_cls(data.num_classes, run_args).to(args.device)
     model.reset_parameters()
     # Reset is deliberately before transfer, never after it.
-    report = load_encoder(model, checkpoint) if variant == 'pretrained' else None
+    report = load_encoder_fn(model, checkpoint) if variant == 'pretrained' else None
     if report:
         print(f'[encoder transfer] {len(report["loaded_keys"])} tensors; missing=[] unexpected=[]')
     masks = make_masks(data, args, seed)
@@ -543,13 +558,15 @@ def finetune_run(data, args, variant, seed, checkpoint=None):
     model.eval()
     best = _node_operation(model, data, masks, args, policy, dtype, splits=('train', 'valid', 'test'))
     counts = model.encoder.parameter_counts() | {'total': sum(p.numel() for p in model.parameters())}
-    atomic_save({'kind': 'hirgraphbert_node_classifier', 'input_mode': 'Structure-only', 'seed': seed,
+    prefix = getattr(args, 'checkpoint_prefix', 'hirgraphbert')
+    atomic_save({'kind': prefix + '_node_classifier', 'input_mode': 'Structure-only', 'seed': seed,
                  'model_state_dict': best_state, 'num_classes': data.num_classes, 'model_config': model.model_config,
                  'config': config, 'dataset': args.dname, 'best_epoch': best_epoch,
                  'encoder_load_report': report, 'masks': {key: value.cpu() for key, value in masks.items()}},
                 directory / 'best_checkpoint.pt')
     result = {'completed': True, 'config': config, 'dataset': args.dname, 'variant': variant, 'seed': seed,
-              'model': 'HIR-GraphBERT', 'input_mode': 'Structure-only', 'best_epoch': best_epoch,
+              'model': getattr(args, 'model_label', 'HIR-GraphBERT'),
+              'input_mode': 'Structure-only', 'best_epoch': best_epoch,
               'last_epoch': len(history), **best, 'parameter_counts': counts, 'parameter_count': counts['total'],
               'encoder_load_report': report, 'train_time': elapsed, 'accuracy_unit': 'percent',
               'encoder_grad_norm_mean': sum(row['encoder_grad_norm'] for row in history) / len(history),

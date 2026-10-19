@@ -271,7 +271,12 @@ def parse_model(args, data):
     
     # --------- Hypergraph Semi-supervised Models --------------------
     
-    if args.method == 'HIRGraphBERT':
+    if args.method == 'HIRCodeBERT':
+        from lib_models.hircodebert import HIRCodeBERT
+        if args.task_type != 'node_cls':
+            raise ValueError('HIRCodeBERT supports node_cls only')
+        model = HIRCodeBERT(num_targets, args)
+    elif args.method == 'HIRGraphBERT':
         from lib_models.hirgraphbert import HIRGraphBERT
         if args.task_type != 'node_cls':
             raise ValueError('HIRGraphBERT supports node_cls only')

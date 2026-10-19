@@ -27,7 +27,7 @@ def historical_results(roots, output):
             if path.suffix == '.json':
                 result = json.loads(path.read_text(encoding='utf-8'))
                 variant = result.get('variant', '')
-                if result.get('model') == 'HIR-GraphBERT' or variant not in (
+                if result.get('model') in ('HIR-GraphBERT', 'HIR-CodeBERT') or variant not in (
                         'full', 'full_scratch', 'full_pretrained', 'feature_only'):
                     continue
                 rows.append({'dataset': result.get('dataset', path.parent.parent.parent.name),
@@ -48,10 +48,11 @@ def historical_results(roots, output):
 
 
 def write_reports(args):
+    model_label = getattr(args, 'model_label', 'HIR-GraphBERT')
     rows = []
     for path in sorted(args.output.glob('*/*/seed_*/metrics.json')):
         result = json.loads(path.read_text(encoding='utf-8'))
-        if result.get('completed') and result.get('model') == 'HIR-GraphBERT':
+        if result.get('completed') and result.get('model') == model_label:
             rows.append(result)
     groups = defaultdict(list)
     for row in rows:
@@ -61,7 +62,7 @@ def write_reports(args):
         protocols = [{key: value for key, value in row['config'].items() if key != 'seed'} for row in group]
         if any(protocol != protocols[0] for protocol in protocols[1:]):
             raise ValueError(f'Different seed protocols in {dataset}/{variant}; use separate output directories')
-        summaries.append({'dataset': dataset, 'model': 'HIR-GraphBERT', 'input_mode': 'Structure-only',
+        summaries.append({'dataset': dataset, 'model': model_label, 'input_mode': 'Structure-only',
                           'variant': variant, 'num_seeds': len(group), 'seeds': ','.join(str(row['seed']) for row in group),
                           'test_acc_mean': mean(row['test_acc'] for row in group),
                           'test_acc_std': pstdev(row['test_acc'] for row in group),
@@ -86,11 +87,11 @@ def write_reports(args):
     write_csv(args.output / 'finetune_summary.csv', summaries)
     write_csv(args.output / 'paired_comparison.csv', comparisons)
     write_csv(args.output / 'historical_references.csv', references)
-    save_json({'model': 'HIR-GraphBERT', 'input_mode': 'Structure-only', 'accuracy_unit': 'percent',
+    save_json({'model': model_label, 'input_mode': 'Structure-only', 'accuracy_unit': 'percent',
                'std_definition': 'population standard deviation across recorded seeds', 'runs': rows,
                'summary': summaries, 'paired_comparisons': comparisons, 'historical_references': references},
               args.output / 'experiment_report.json')
-    lines = ['# HIR-GraphBERT — Structure-only', '',
+    lines = [f'# {model_label} — Structure-only', '',
              'Encoder/classifier inputs contain H-IR structure only. Accuracies are percentages; standard deviation is across seeds.', '',
              '| Dataset | Configuration | Seeds | Test accuracy (mean ± std) | Extra structural attention parameters |',
              '| --- | --- | --- | --- | --- |']
@@ -124,7 +125,8 @@ def run_benchmark(args):
             finetune_run(data, args, variant, seed, checkpoint)
             write_reports(args)
     rows = write_reports(args)
-    print(f'[Structure-only experiment report] {args.output / "EXPERIMENT_REPORT.md"}')
+    print(f'[{getattr(args, "model_label", "HIR-GraphBERT")} experiment report] '
+          f'{args.output / "EXPERIMENT_REPORT.md"}')
     return rows
 
 

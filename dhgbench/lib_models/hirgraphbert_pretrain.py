@@ -10,11 +10,11 @@ from lib_models.hirgraphbert import HIRGraphEncoder
 
 
 class HIRGraphPretrainer(nn.Module):
-    def __init__(self, config, weights=None):
+    def __init__(self, config, weights=None, encoder_cls=HIRGraphEncoder):
         super().__init__()
         self.model_config = dict(config)
         self.weights = weights or {'membership': 1., 'relation': .5, 'hir': 1.}
-        self.encoder = HIRGraphEncoder(config)
+        self.encoder = encoder_cls(config)
         hidden = config['hidden_size']
         self.membership_head = nn.Sequential(nn.Linear(3 * hidden, hidden), nn.GELU(), nn.Linear(hidden, 1))
         self.relation_head = nn.Sequential(nn.Linear(3 * hidden, hidden), nn.GELU(), nn.Linear(hidden, 3))
