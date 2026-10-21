@@ -9,8 +9,7 @@ from lib_utils.utils import fix_seed,result_printer,mean_std_metrics
 from lib_utils.train_agent import Trainer
 from lib_utils.eval_agent import Evaluator
 from lib_utils.result_logger import ResultLogger
-from lib_utils.hirbert_results import save_hirbert_run
-from lib_models.HNN import HIRBERT,CENE,HCHA,HyperGCN,HNHN,SetGNN,UniGNN,UniGCNII,LEGCN,HyperND,EquivSetGNN,OrderSplitEDHNN,\
+from lib_models.HNN import ENENodeClassifier,HIRCall,HIRSeqGRU,CENE,HCHA,HyperGCN,HNHN,SetGNN,UniGNN,UniGCNII,LEGCN,HyperND,EquivSetGNN,OrderSplitEDHNN,\
                             PlainUnigencoder,HJRL,SheafHyperGNN,EHNN,TMPHN,PhenomNN,PhenomNNS,DPHGNN,TFHNN,PlainMLP,HyperGT,CEGCN,CEGAT
 
 from lib_dataset.data_perturbation import perturbation
@@ -186,13 +185,14 @@ class ExpAgent:
                 self.trainer.train_time,
                 data,
                 model=model,
+                selection=({'best_epoch': self.trainer.best_epoch,
+                            'best_val_acc': self.trainer.best_val_acc}
+                           if self.args.method == 'ENE' else None),
             )
-            if self.args.method == 'HIRBERT' and self.result_logger.enabled:
-                path = save_hirbert_run(
-                    model, data, masks, self.trainer.hirbert_history, result,
-                    self.trainer.train_time, self.args, self.run_id, seed,
-                )
-                print(f'[HIRBERT artifacts] {path}')
+            if self.args.method == 'ENE' and getattr(self.args, 'ene_batch_output', None):
+                from lib_utils.ene_batch import record_seed
+                record_seed(self.args, self.run_id, seed, result,
+                            self.trainer.train_time, self.trainer.best_epoch, self.trainer.best_val_acc)
             
         print(f'---------------------------------[Final]--------------------------------------')
         self.test_dict = defaultdict(list) 
@@ -271,20 +271,20 @@ def parse_model(args, data):
     
     # --------- Hypergraph Semi-supervised Models --------------------
     
-    if args.method == 'HIRCodeBERT':
-        from lib_models.hircodebert import HIRCodeBERT
+    if args.method == 'ENE':
         if args.task_type != 'node_cls':
-            raise ValueError('HIRCodeBERT supports node_cls only')
-        model = HIRCodeBERT(num_targets, args)
-    elif args.method == 'HIRGraphBERT':
-        from lib_models.hirgraphbert import HIRGraphBERT
+            raise ValueError('ENE v0 supports node_cls only')
+        model = ENENodeClassifier(data.num_features, data.num_classes, args)
+    elif args.method == 'HIRCall':
         if args.task_type != 'node_cls':
-            raise ValueError('HIRGraphBERT supports node_cls only')
-        model = HIRGraphBERT(num_targets, args)
-    elif args.method == 'HIRBERT':
+            raise ValueError('HIRCall supports node_cls only')
+        model = HIRCall(data.num_classes, args, data)
+    elif args.method == 'HIRSeqGRU':
         if args.task_type != 'node_cls':
-            raise ValueError('HIRBERT V0.1 supports node_cls only')
-        model = HIRBERT(data.num_features, num_targets, args)
+            raise ValueError('HIRSeqGRU supports node_cls only')
+        # This method is a node classifier even if the generic encoder flag
+        # was supplied; its output width must remain the number of classes.
+        model = HIRSeqGRU(data.num_classes, args, data)
     elif args.method == 'CENE':
         if args.task_type != 'node_cls':
             raise ValueError('CENE supports node_cls only')

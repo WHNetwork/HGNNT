@@ -1,0 +1,9 @@
+default:
+  hircall_embedding_dim: 128
+  hircall_hidden_size: 128
+  hircall_num_layers: 2
+  hircall_dropout: 0.3
+  hircall_batch_size: 256
+  epochs: 200
+  lr: 0.001
+  wd: 0.0

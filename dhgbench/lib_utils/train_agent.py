@@ -175,13 +175,11 @@ class Trainer:
         ### Training loop ###
         start_time = time.time()
         model.reset_parameters()
-        if args.method in ('HIRGraphBERT', 'HIRCodeBERT') and getattr(args, 'hir_pretrained_checkpoint', None):
-            if args.method == 'HIRCodeBERT':
-                from lib_models.hircodebert import load_encoder
-            else:
-                from lib_models.hirgraphbert import load_encoder
-            report = load_encoder(model, args.hir_pretrained_checkpoint)
-            print(f'[{args.method} encoder transfer] {len(report["loaded_keys"])} tensors strictly loaded')
+        if args.method == 'ENE':
+            if args.epochs < 1 or not bool(masks['valid'].any()):
+                raise ValueError('ENE validation selection requires epochs >= 1 and a nonempty validation split')
+            self.best_epoch, self.best_val_acc = 0, float('-inf')
+            best_state = None
         
         if args.method == 'UniGCNII':
             optimizer = torch.optim.Adam([
@@ -198,9 +196,6 @@ class Trainer:
         elif args.method == 'TMPHN':
             train_idx = mask_to_index(masks['train'].to('cpu'),data.x.shape[0])
             data.target_idx = train_idx
-
-        if args.method == 'HIRBERT':
-            self.hirbert_history = []
 
         #for epoch in tqdm(range(args.epochs)):
         for epoch in trange(args.epochs):
@@ -239,25 +234,24 @@ class Trainer:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_thresh)
                 optimizer.step()
 
-            if args.method == 'HIRBERT':
+            if args.method == 'ENE':
                 model.eval()
                 with torch.no_grad():
-                    prediction, _ = model(data)
-                    val_loss = criterion(F.log_softmax(prediction[masks['valid']], dim=1),
-                                         data.y[masks['valid']])
-                    accuracies = [float((prediction[masks[key]].argmax(-1) == data.y[masks[key]]).float().mean())
-                                  for key in ('train', 'valid', 'test')]
-                self.hirbert_history.append({
-                    'epoch': epoch + 1, 'train_loss': loss.item(), 'val_loss': val_loss.item(),
-                    **dict(zip(('train_acc', 'val_acc', 'test_acc'), (100 * acc for acc in accuracies))),
-                })
+                    validation_logits, _ = model(data)
+                    validation_acc = float((validation_logits[masks['valid']].argmax(-1)
+                                            == data.y[masks['valid']]).float().mean().item())
+                if validation_acc > self.best_val_acc:
+                    self.best_epoch, self.best_val_acc = epoch + 1, validation_acc
+                    best_state = {name: value.detach().to(device='cpu', copy=True)
+                                  for name, value in model.state_dict().items()}
+                del validation_logits
 
             if (epoch+1) % args.display_step == 0:
                 
                 if args.method == 'TMPHN':
                     data.target_idx=data.all_idx
                     
-                result = accuracies if args.method == 'HIRBERT' else evaluate(model, data, masks)
+                result = evaluate(model, data, masks)
                 
                 print(f'Epoch: {epoch+1:02d}, '
                     f'Train Acc: {100 * result[0]:.2f}%, '
@@ -267,6 +261,10 @@ class Trainer:
                 if args.method == 'TMPHN':
                     data.target_idx=train_idx
                 
+        if args.method == 'ENE':
+            model.load_state_dict(best_state)
+            model.eval()
+            print(f'[ENE selection] epoch={self.best_epoch}, validation={100 * self.best_val_acc:.2f}%')
         end_time = time.time()
         self.train_time = end_time-start_time
         print(f'Training Time: {end_time-start_time:.2f}')

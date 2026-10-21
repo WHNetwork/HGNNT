@@ -1,0 +1,10 @@
+default:
+  hirseq_embedding_dim: 128
+  hirseq_hidden_size: 128
+  hirseq_num_layers: 2
+  hirseq_dropout: 0.3
+  hirseq_max_chunk_length: 512
+  hirseq_chunk_batch_size: 16
+  epochs: 200
+  lr: 1.0e-3
+  wd: 0.0

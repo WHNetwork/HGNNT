@@ -73,6 +73,9 @@ class ResultLogger:
         self.results_dir = getattr(args, 'results_dir', './results')
         self.runs_path = os.path.join(self.results_dir, 'node_cls_runs.csv')
         self.summary_path = os.path.join(self.results_dir, 'node_cls_summary.csv')
+        if getattr(args, 'method', '') == 'ENE':
+            self.runs_path = os.path.join(self.results_dir, 'ene_node_cls_runs.csv')
+            self.summary_path = os.path.join(self.results_dir, 'ene_node_cls_summary.csv')
         if getattr(args, 'method', '') == 'CENE' and not getattr(args, 'cene_benchmark', False):
             self.runs_path = os.path.join(self.results_dir, 'cene_node_cls_runs.csv')
             self.summary_path = os.path.join(self.results_dir, 'cene_node_cls_summary.csv')
@@ -120,7 +123,7 @@ class ResultLogger:
                 writer.writeheader()
             writer.writerow({field: row.get(field, '') for field in fieldnames})
 
-    def log_node_cls_seed(self, seed, metrics, train_time, data, model=None):
+    def log_node_cls_seed(self, seed, metrics, train_time, data, model=None, selection=None):
         if not self.enabled:
             return
 
@@ -144,6 +147,13 @@ class ResultLogger:
             row['parameter_count'] = sum(p.numel() for p in model.parameters()) if model is not None else ''
             row['lambda_value'] = model.lambda_param.item() if self.args.method == 'CENE' and model is not None else ''
             fields = RUN_FIELDS + BENCHMARK_FIELDS
+        if self.args.method == 'ENE':
+            row.update(selection or {})
+            # The existing ResultLogger accuracy columns use percentages.
+            # Batch CSVs independently use fractions throughout.
+            if selection is not None:
+                row['best_val_acc'] = 100 * selection['best_val_acc']
+            fields = fields + ['best_epoch', 'best_val_acc']
         self._append_row(self.runs_path, fields, row)
 
     def log_node_cls_summary(

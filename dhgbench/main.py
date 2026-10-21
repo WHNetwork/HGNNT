@@ -1,12 +1,7 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / 'dhgbench'))
-from lib_utils.exp_agent import ExpAgent
-from lib_models.HNN.preprocessing import algo_preprocessing
-from lib_dataset.data_base import HyperDataset
-from lib_dataset.preprocessing import data_processing
 from parameter_parser import parameter_parser,method_config,set_task_args
-from lib_dataset.data_perturbation import perturbation
 
 
 def should_defer_model_preprocessing(args):
@@ -16,11 +11,19 @@ def should_defer_model_preprocessing(args):
     )
 
 
-if __name__ == '__main__':
-
-    args = parameter_parser() 
+def run_single(args):
     args = method_config(args) 
     args = set_task_args(args) 
+    if getattr(args, 'ene_batch_output', None):
+        from lib_utils.ene_batch import configure_worker
+        configure_worker(args)
+    # Batch scheduling stays independent of the model/GPU dependencies.
+    from lib_utils.exp_agent import ExpAgent
+    from lib_models.HNN.preprocessing import algo_preprocessing
+    from lib_dataset.data_base import HyperDataset
+    from lib_dataset.preprocessing import data_processing
+    from lib_dataset.data_perturbation import perturbation
+
 
     data=HyperDataset(args) 
 
@@ -55,3 +58,15 @@ if __name__ == '__main__':
     
     agent = ExpAgent(args)
     agent.running(args.task_type,data)
+
+
+if __name__ == '__main__':
+    args = parameter_parser()
+    if args.all_datasets or args.datasets is not None:
+        from lib_utils.ene_batch import run_batch
+        run_batch(args)
+    elif args.ene_batch_output:
+        from lib_utils.ene_batch import run_worker
+        sys.exit(run_worker(args, run_single))
+    else:
+        run_single(args)

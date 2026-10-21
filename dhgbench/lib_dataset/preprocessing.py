@@ -10,7 +10,37 @@ from torch_geometric.nn.conv.gcn_conv import gcn_norm
 def data_processing(args,db):
     
     data=copy.deepcopy(db.data)
-    data = ExtractV2E(data)
+    if args.method == 'HIRSeqGRU':
+        # Loader IDs are bipartite: vertices 0..N-1, edge IDs offset by N.
+        # Keep source edge IDs; the H-IR compiler canonicalizes them itself.
+        num_nodes = int(data.n_x)
+        vertex_to_edge = (data.edge_index[0] < num_nodes) & (data.edge_index[1] >= num_nodes)
+        data.edge_index = data.edge_index[:, vertex_to_edge].clone().long()
+        data.edge_index[1] -= num_nodes
+        declared_edges = getattr(data, 'num_hyperedges', None)
+        declared_edges = int(declared_edges) if declared_edges is not None else None
+        # A declared 0..M-1 domain preserves explicit empty edges. When IDs
+        # lie outside it, M is not an ID bound: compile only represented IDs
+        # instead of inventing edges for gaps or rejecting valid source IDs.
+        if (declared_edges is not None and data.edge_index.numel()
+                and int(data.edge_index[1].max()) >= declared_edges):
+            declared_edges = None
+        db.hirseqgru_num_hyperedges = declared_edges
+    elif args.method == 'HIRCall':
+        # Preserve source IDs, real singleton/duplicate edges and declared
+        # empty slots. The compiler handles canonical ordering itself.
+        num_nodes = int(data.n_x)
+        vertex_to_edge = (data.edge_index[0] < num_nodes) & (data.edge_index[1] >= num_nodes)
+        data.edge_index = data.edge_index[:, vertex_to_edge].clone().long()
+        data.edge_index[1] -= num_nodes
+        declared_edges = getattr(data, 'num_hyperedges', None)
+        declared_edges = int(declared_edges) if declared_edges is not None else None
+        if (declared_edges is not None and data.edge_index.numel()
+                and int(data.edge_index[1].max()) >= declared_edges):
+            declared_edges = None
+        db.hircall_num_hyperedges = declared_edges
+    else:
+        data = ExtractV2E(data)
 
     preserve_canonical_hyperedges = (
         getattr(args, 'task_type', None) == 'edge_pred'
@@ -28,10 +58,10 @@ def data_processing(args,db):
             data = expand_edge_index(data)
         data = norm_contruction(data, option=args.normtype)
         db.norm=data.norm.to(args.device)
-    elif args.method in ('HIRBERT', 'HIRGraphBERT', 'HIRCodeBERT'):
-        # Compile only the dataset hyperedges. Keep genuine singleton edges.
-        if data.edge_index.numel():
-            data.edge_index[1] -= data.edge_index[1].min()
+    elif args.method == 'HIRSeqGRU':
+        pass  # Already normalized above; do not augment the original graph.
+    elif args.method == 'HIRCall':
+        pass  # Structure-only calls use the unaugmented incidence relation.
     else:
         if args.add_self_loop:
             data = Add_Self_Loops(data)

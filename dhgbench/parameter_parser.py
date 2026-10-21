@@ -14,17 +14,15 @@ def update_from_dict(obj, updates):
 # recommend hyperparameters here
 def method_config(args):
 
-    if args.method in ('HIRBERT', 'HIRGraphBERT', 'HIRCodeBERT'):
-        # Keep HIRBERT CLI overrides without changing baseline config semantics.
+    if args.method == 'ENE':
         config_path = os.path.join(os.path.dirname(__file__), 'lib_yamls',
-                                   'node_yamls', 'config_' + args.method.lower() + '.yaml')
+                                   'node_yamls', 'config_ene.yaml')
         with open(config_path, encoding='utf-8') as file:
             configs = yaml.safe_load(file)
-        name = 'default' if str2bool(args.is_default) else args.dname
-        conf_dt = dict(configs['default'])
-        conf_dt.update(configs.get(name, {}))
-        conf_dt.update(getattr(args, '_hirbert_cli_overrides', {}))
-        update_from_dict(args, conf_dt)
+        updates = dict(configs.get('default', {}))
+        updates.update(configs.get(args.dname, {}))
+        updates.update(getattr(args, '_ene_cli_overrides', {}))
+        update_from_dict(args, updates)
         return args
 
     if args.is_default:
@@ -35,7 +33,7 @@ def method_config(args):
         # conf_dt = json.load(open(f"{os.path.join('./', 'lib_configs', args.method.lower(), config_name)}.json")) 
         task_prefix=args.task_type.split('_')[0]+'_yamls'
         configs = yaml.safe_load(open(f"{os.path.join('./', 'lib_yamls', task_prefix,'config_'+args.method.lower())}.yaml"))
-        if args.method == 'CENE':
+        if args.method in ('CENE', 'HIRSeqGRU', 'HIRCall'):
             conf_dt = configs.get(config_name, configs['default'])
         else:
             conf_dt = configs[config_name]
@@ -78,15 +76,17 @@ def set_task_args(args):
     validate_observed_edge_prediction_args(args)
     if args.method == 'CENE' and args.task_type != 'node_cls':
         raise ValueError('CENE supports node_cls only')
-    if args.method == 'HIRBERT' and args.task_type != 'node_cls':
-        raise ValueError('HIRBERT V0.1 supports node_cls only')
-    if args.method in ('HIRGraphBERT', 'HIRCodeBERT') and args.task_type != 'node_cls':
-        raise ValueError(f'{args.method} supports node_cls only')
+    if args.method == 'HIRSeqGRU' and args.task_type != 'node_cls':
+        raise ValueError('HIRSeqGRU supports node_cls only')
+    if args.method == 'HIRCall' and args.task_type != 'node_cls':
+        raise ValueError('HIRCall supports node_cls only')
+    if args.method == 'ENE' and args.task_type != 'node_cls':
+        raise ValueError('ENE v0 supports node_cls only')
     
     if args.task_type == 'node_cls':
         if args.dname not in _single_datasets_:
             raise ValueError('The dataset is not suitable for node classification')
-        args.add_self_loop = args.method not in ('HIRBERT', 'HIRGraphBERT', 'HIRCodeBERT')
+        args.add_self_loop = args.method not in ('HIRSeqGRU', 'HIRCall')
         if args.use_bench_prop:
             args.train_prop,args.valid_prop = 0.5,0.25
         args.early_stop = False
@@ -155,6 +155,9 @@ def parameter_parser():
     parser.add_argument('--method', default='HGNN') 
     parser.add_argument('--save_results', default=True, type=str2bool)
     parser.add_argument('--results_dir', default='./results', type=str)
+    parser.add_argument('--all_datasets', action='store_true')
+    parser.add_argument('--datasets', nargs='+')
+    parser.add_argument('--ene_batch_output', help=argparse.SUPPRESS)
     parser.add_argument('--order_fusion', default='mean', choices=['mean','attn','cross_attn'])
     parser.add_argument('--max_exact_order', default=8, type=int)
     parser.add_argument('--order_heads', default=4, type=int)
@@ -163,18 +166,9 @@ def parameter_parser():
     parser.add_argument('--cene_benchmark', action='store_true')
     parser.add_argument('--seed_offset', default=0, type=int)
     parser.add_argument('--edhnn_depth_match', action='store_true')
+    parser.add_argument('--All_num_layers', type=int, choices=[1, 2], default=argparse.SUPPRESS)
+    parser.add_argument('--MLP_hidden', type=int, default=argparse.SUPPRESS)
 
-    parser.add_argument('--hir_hidden_size', type=int, default=None)
-    parser.add_argument('--hir_num_hidden_layers', type=int, default=None)
-    parser.add_argument('--hir_local_num_hidden_layers', type=int, default=None)
-    parser.add_argument('--hir_semantic_num_hidden_layers', type=int, default=None)
-    parser.add_argument('--hir_num_attention_heads', type=int, default=None)
-    parser.add_argument('--hir_intermediate_size', type=int, default=None)
-    parser.add_argument('--hir_dropout', type=float, default=None)
-    parser.add_argument('--hir_max_seq_length', type=int, default=None)
-    parser.add_argument('--hir_chunk_batch_size', type=int, default=None)
-    parser.add_argument('--hir_gradient_checkpointing', type=str2bool, default=None)
-    parser.add_argument('--hir_pretrained_checkpoint', default=None)
     
     parser.add_argument('--device', default='cuda:0')
     parser.add_argument('--num_seeds', type=int, default=2)
@@ -233,8 +227,25 @@ def parameter_parser():
 
     args = parser.parse_args()
 
-    if args.method in ('HIRBERT', 'HIRGraphBERT', 'HIRCodeBERT'):
-        explicit = {arg[2:].split('=', 1)[0] for arg in sys.argv[1:] if arg.startswith('--')}
-        args._hirbert_cli_overrides = {key: getattr(args, key) for key in explicit if hasattr(args, key)}
+    if args.all_datasets or args.datasets is not None:
+        if args.method != 'ENE' or args.task_type != 'node_cls':
+            parser.error('Batch evaluation supports only --method=ENE --task_type=node_cls')
+    args._dname_choices = next(action.choices for action in parser._actions if action.dest == 'dname')
+    if args.method == 'ENE':
+        overrides = {}
+        for token in sys.argv[1:]:
+            if not token.startswith('--'):
+                continue
+            option = token.split('=', 1)[0]
+            actions = [action for action in parser._actions
+                       if any(flag.startswith(option) for flag in action.option_strings)]
+            exact = [action for action in actions if option in action.option_strings]
+            actions = exact or actions
+            if len(actions) == 1:
+                dest = actions[0].dest
+                if hasattr(args, dest):
+                    overrides[dest] = getattr(args, dest)
+        args._ene_cli_overrides = overrides
+        args._raw_cli = sys.argv[1:]
 
     return args

@@ -1,8 +1,6 @@
 import os
 import random
 import copy
-import torch
-import numpy as np
 from lib_utils.utils import fix_seed
 from lib_dataset.edge_sampler import *
 from lib_dataset.preprocessing import construct_v2e_norm, expand_edge_index_tensor

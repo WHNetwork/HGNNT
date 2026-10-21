@@ -211,7 +211,11 @@ class HyperDataset(object):
         self.num_classes= len(self.y.unique())
         self.num_features=self.x.shape[1]
         self.num_nodes=self.x.shape[0]
-        self.num_hyperedges=len(self.hyperedge_index[1].unique())
+        declared_edges = getattr(self, 'hirseqgru_num_hyperedges', None)
+        if self.method == 'HIRCall':
+            declared_edges = getattr(self, 'hircall_num_hyperedges', None)
+        self.num_hyperedges=(declared_edges if declared_edges is not None
+                            else len(self.hyperedge_index[1].unique()))
  
     def calculate_memory_size(self):
 
