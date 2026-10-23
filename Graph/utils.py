@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from torch import nn
 from .data import DATA_ROOT, pairs_index
-from .encoder import GraphIREncoder
+from .encoder import ARCHITECTURE_VERSION, GraphIREncoder
 from .ir import compile_graph
 
 RUN_ROOT = Path(__file__).resolve().parent / "runs"
@@ -24,14 +24,16 @@ def positive_int(value):
     return result
 
 
-def add_model_args(parser, max_edges=20000):
+def add_model_args(parser):
     parser.add_argument("--hidden_dim", type=positive_int, default=256)
     parser.add_argument("--num_blocks", type=positive_int, default=4)
     parser.add_argument("--num_heads", type=positive_int, default=4)
     parser.add_argument("--dropout", type=float, default=.1)
     parser.add_argument("--ffn_expansion", type=positive_int, default=4)
-    parser.add_argument("--max_edges", type=int, default=max_edges,
-                        help="hard diagnostic limit; full dense O(E^2) attention is always used")
+    parser.add_argument("--max_tokens", type=positive_int,
+                        help="optional limit on IR tokens + node slots + GRAPH; never truncates")
+    parser.add_argument("--max_relations", type=positive_int,
+                        help="optional limit on sparse attention relations; never truncates")
 
 
 def add_training_args(parser, name, epochs=200):
@@ -51,7 +53,7 @@ def add_transfer_args(parser):
 
 
 def model_config(args):
-    return {k: getattr(args, k) for k in (*CORE_KEYS, "max_edges")}
+    return {k: getattr(args, k) for k in (*CORE_KEYS, "max_tokens", "max_relations")}
 
 
 def seed_all(seed):
@@ -127,11 +129,26 @@ class PairHead(nn.Module):
         return self.mlp(torch.cat((u+v, (u-v).abs(), u*v), -1)).squeeze(-1)
 
 
+def checkpoint_encoder_config(checkpoint):
+    config = checkpoint.get("encoder_config", {})
+    version = config.get("architecture_version")
+    if version != ARCHITECTURE_VERSION:
+        raise ValueError(f"Incompatible encoder checkpoint architecture {version!r}; "
+                         f"expected {ARCHITECTURE_VERSION!r}. Old five-stage Encoder weights "
+                         "are unsupported; pretrain the new architecture again.")
+    return config
+
+
+def load_encoder_checkpoint(encoder, checkpoint):
+    checkpoint_encoder_config(checkpoint)
+    encoder.load_state_dict(checkpoint["encoder_state_dict"], strict=True)
+
+
 def make_encoder(args, feature_dim, seed):
     """Strict core loading FIRST, then initialize a fresh dataset feature adapter.
 
     Scratch and transfer use identical CLI architecture, public splits, and head/
-    adapter RNG. max_edges is a runtime budget, independent of learned weights.
+    adapter RNG. Token/relation limits are runtime budgets, independent of weights.
     """
     seed_all(seed)
     encoder = GraphIREncoder(**model_config(args))
@@ -139,7 +156,7 @@ def make_encoder(args, feature_dim, seed):
         if args.checkpoint is None:
             raise ValueError("pretrained mode requires --checkpoint")
         ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
-        config = ckpt["encoder_config"]
+        config = checkpoint_encoder_config(ckpt)
         mismatches = {k: (config[k], getattr(args, k)) for k in CORE_KEYS if config[k] != getattr(args, k)}
         if mismatches or config.get("feature_dim") is not None:
             raise ValueError(f"expected structure-only checkpoint with matching CLI architecture: {mismatches}")

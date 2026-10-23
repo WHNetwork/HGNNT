@@ -16,7 +16,7 @@ from .data import pairs_index, sample_non_edges
 from .ir import compile_graph
 from .utils import (add_model_args, add_training_args, add_transfer_args, make_encoder,
                     seed_all, new_run, CSVLog, write_json, load_planetoid, PairHead,
-                    binary_metrics, save_downstream, summarize)
+                    binary_metrics, save_downstream, summarize, load_encoder_checkpoint)
 
 
 def link_split(program, seed, val_ratio=.1, test_ratio=.1):
@@ -106,7 +106,8 @@ def run_seed(a, seed, run):
                            actual_train_supervision_ratio=supervision_count/visible.num_edges,
                            validation_auc=val["auc"], validation_ap=val["ap"], best_epoch=best_epoch))
     ckpt = torch.load(run / "best.pt", map_location=a.device, weights_only=True)
-    encoder.load_state_dict(ckpt["encoder_state_dict"]); head.load_state_dict(ckpt["head_state_dict"])
+    load_encoder_checkpoint(encoder, ckpt)
+    head.load_state_dict(ckpt["head_state_dict"])
     encoder.eval(); head.eval()
     with torch.no_grad():
         nodes = encoder(visible, x).node_embeddings

@@ -1,41 +1,40 @@
-"""Syntax-only tokens and shared degree/optional-feature symbol initialization."""
+﻿"""Type projection plus visible structure and optional external node features."""
 
-import torch
 from torch import nn
+from torch.nn import functional as F
 from .tokenizer import TokenType
 
 
 class GraphEmbedding(nn.Module):
     def __init__(self, hidden_dim, feature_dim=None):
         super().__init__()
-        self.syntax = nn.Embedding(len(TokenType), hidden_dim)
-        self.shared_node = nn.Parameter(torch.empty(hidden_dim))
-        nn.init.normal_(self.shared_node, std=0.02)
-        self.structural_mlp = nn.Sequential(nn.Linear(1, hidden_dim), nn.GELU(),
-                                            nn.Linear(hidden_dim, hidden_dim))
+        self.type_projection = nn.Linear(len(TokenType), hidden_dim, bias=False)
+        self.structure_projection = nn.Linear(3, hidden_dim, bias=False)
         self.norm = nn.LayerNorm(hidden_dim)
-        self.feature_mlp = None
-        self.register_parameter("gamma", None)
+        self.feature_projection = None
         if feature_dim is not None:
             self.add_feature_adapter(feature_dim)
 
     def add_feature_adapter(self, feature_dim):
-        if feature_dim <= 0 or self.feature_mlp is not None:
-            raise ValueError("adapter requires positive feature_dim and can only be initialized once")
-        d = self.shared_node.numel()
-        self.feature_mlp = nn.Sequential(nn.Linear(feature_dim, d), nn.GELU(), nn.Linear(d, d))
-        self.feature_mlp.to(device=self.shared_node.device, dtype=self.shared_node.dtype)
-        self.gamma = nn.Parameter(self.shared_node.new_tensor(0.1))
+        if feature_dim <= 0 or self.feature_projection is not None:
+            raise ValueError("feature projection requires a positive dimension and may be configured once")
+        weight = self.type_projection.weight
+        self.feature_projection = nn.Linear(feature_dim, weight.shape[0], bias=False).to(
+            device=weight.device, dtype=weight.dtype)
 
-    def forward(self, program, x=None):
-        device = self.shared_node.device
-        ids = torch.tensor([int(t.token_type) for t in program.tokens], device=device, dtype=torch.long)
-        tokens = self.syntax(ids)
-        # Counts are exclusively from the tokenizer's VISIBLE reference bindings.
-        degree = self.shared_node.new_tensor([len(p) for p in program.symbol_occurrences])
-        nodes = self.shared_node + self.structural_mlp(degree.log1p().unsqueeze(-1))
+    def forward(self, reference, x=None):
+        weight = self.type_projection.weight
+        types = F.one_hot(reference.token_types, num_classes=len(TokenType)).to(dtype=weight.dtype)
+        states = self.type_projection(types)
+        structure = self.structure_projection(reference.node_features)
+        # All occurrences of one symbol read the same initial structural row.
+        states = states.index_add(0, reference.ref_positions, structure[reference.ref_nodes])
+        nodes = structure
         if x is not None:
-            if self.feature_mlp is None or x.ndim != 2 or x.shape[0] != len(degree):
-                raise ValueError("features require a configured adapter and one row per node")
-            nodes = nodes + self.gamma * self.feature_mlp(x.to(device=device, dtype=nodes.dtype))
-        return tokens, self.norm(nodes)
+            projection = self.feature_projection
+            if (projection is None or x.ndim != 2
+                    or x.shape != (len(nodes), projection.in_features)):
+                raise ValueError("x requires a configured feature projection and shape [num_nodes, feature_dim]")
+            nodes = nodes + projection(x.to(device=weight.device, dtype=weight.dtype))
+        states = states.index_add(0, reference.node_positions, nodes)
+        return self.norm(states)

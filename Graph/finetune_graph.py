@@ -14,7 +14,8 @@ if not __package__:
 
 from .ir import compile_graph
 from .utils import (add_model_args, add_training_args, add_transfer_args, make_encoder,
-                    seed_all, new_run, CSVLog, write_json, accuracy, save_downstream, summarize)
+                    seed_all, new_run, CSVLog, write_json, accuracy, save_downstream, summarize,
+                    load_encoder_checkpoint)
 
 
 def load_dataset(a):
@@ -85,7 +86,8 @@ def run_seed(a, seed, run, source):
             log.write(dict(dataset=a.dataset, mode=a.mode, seed=seed, epoch=epoch,
                            train_loss=total/len(order), validation_accuracy=val, best_epoch=best_epoch))
     ckpt = torch.load(run / "best.pt", map_location=a.device, weights_only=True)
-    encoder.load_state_dict(ckpt["encoder_state_dict"]); head.load_state_dict(ckpt["head_state_dict"])
+    load_encoder_checkpoint(encoder, ckpt)
+    head.load_state_dict(ckpt["head_state_dict"])
     test = evaluate(splits["test"])
     return dict(dataset=a.dataset, mode=a.mode, seed=seed, best_epoch=best_epoch,
                 validation_accuracy=best, test_accuracy=test)

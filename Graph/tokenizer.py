@@ -11,6 +11,8 @@ class TokenType(IntEnum):
     NODE_REF = 2
     END_EDGE = 3
     PAD = 4
+    NODE_SLOT = 5
+    GRAPH = 6
 
 
 @dataclass(frozen=True)

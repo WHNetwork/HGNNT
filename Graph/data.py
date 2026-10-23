@@ -27,8 +27,11 @@ def pairs_index(pairs):
     return torch.tensor(list(pairs), dtype=torch.long).reshape(-1, 2).t().contiguous()
 
 
-def split_paths(root, split, limit=None, seed=0):
-    groups = [sorted((Path(root) / split / family).glob("*.pt")) for family in FAMILIES]
+def split_paths(root, split, limit=None, seed=0, families=None):
+    families = FAMILIES if families is None else tuple(families)
+    if not families or len(set(families)) != len(families) or any(f not in FAMILIES for f in families):
+        raise ValueError("families must be a nonempty selection of distinct supported graph families")
+    groups = [sorted((Path(root) / split / family).glob("*.pt")) for family in families]
     rng = random.Random(seed)
     for group in groups:
         rng.shuffle(group)

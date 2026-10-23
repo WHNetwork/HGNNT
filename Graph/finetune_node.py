@@ -14,7 +14,7 @@ if not __package__:
 from .ir import compile_graph
 from .utils import (add_model_args, add_training_args, add_transfer_args, make_encoder,
                     seed_all, new_run, CSVLog, write_json, load_planetoid,
-                    rewire_graph, accuracy, save_downstream, summarize)
+                    rewire_graph, accuracy, save_downstream, summarize, load_encoder_checkpoint)
 
 
 def run_seed(a, seed, run):
@@ -60,7 +60,8 @@ def run_seed(a, seed, run):
                 train_loss=loss.item(), train_accuracy=train, validation_accuracy=val,
                 test_accuracy="", best_epoch=best_epoch))
     ckpt = torch.load(run / "best.pt", map_location=a.device, weights_only=True)
-    encoder.load_state_dict(ckpt["encoder_state_dict"]); head.load_state_dict(ckpt["head_state_dict"])
+    load_encoder_checkpoint(encoder, ckpt)
+    head.load_state_dict(ckpt["head_state_dict"])
     encoder.eval(); head.eval()
     with torch.no_grad():
         logits = head(encoder(program, x).node_embeddings)
